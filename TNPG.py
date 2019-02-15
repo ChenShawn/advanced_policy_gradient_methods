@@ -42,7 +42,7 @@ def build_gaussian_network(input_op, output_dim, scope, mu_scale=1.0, trainable=
 
 def hessian_vector_product(x, grad, variable):
     kl_grad_prod = tf.reduce_sum(grad * x)
-    return tf.gradients(kl_grad_prod, variable)[0]
+    return tf.stop_gradient(tf.gradients(kl_grad_prod, variable)[0])
 
 
 def build_conjugate_gradient(x, kl_grad, variable, n_iter=10, func_Ax=hessian_vector_product):
@@ -55,16 +55,18 @@ def build_conjugate_gradient(x, kl_grad, variable, n_iter=10, func_Ax=hessian_ve
     Truncated natural policy gradient uses fixed number of iterations in the inner loop
     Reference: https://en.wikipedia.org/wiki/Conjugate_gradient_method
     """
+    x = tf.stop_gradient(x)
     r = x - func_Ax(x, kl_grad, variable)
-    p = tf.identity(r)
-    r_dot_r = tf.reduce_sum(tf.square(r), axis=[1, 2])
+    p = tf.stop_gradient(tf.identity(r))
+    r_dot_r = tf.reduce_sum(tf.square(r))
     for k in range(n_iter):
-        p_dot_Ap = tf.reduce_sum(p * func_Ax(p, kl_grad, variable), axis=[1, 2])
-        alpha = r_dot_r / p_dot_Ap
+        Ap = func_Ax(p, kl_grad, variable)
+        p_dot_Ap = tf.reduce_sum(p * Ap)
+        alpha = r_dot_r / (p_dot_Ap + 1e-8)
         x = x + alpha * p
-        r = r - alpha * func_Ax(p, kl_grad, variable)
-        r_dot_r_new = tf.reduce_sum(tf.square(r), axis=[1, 2])
-        beta = r_dot_r_new / r_dot_r
+        r = r - alpha * Ap
+        r_dot_r_new = tf.reduce_sum(tf.square(r))
+        beta = r_dot_r_new / (r_dot_r + 1e-8)
         r_dot_r = r_dot_r_new
         p = r + beta * p
     return x
@@ -124,8 +126,8 @@ class TNPGModel(object):
 
         # Policy function definition
         print(' [*] Building policy function...')
-        self.policy, pi_vars = build_gaussian_network(self.state, A_DIM, scope='policy')
-        old_policy, old_vars = build_gaussian_network(self.state, A_DIM, scope='old_policy', trainable=False)
+        self.policy, pi_vars = build_gaussian_network(self.state, 1, scope='policy')
+        old_policy, old_vars = build_gaussian_network(self.state, 1, scope='old_policy', trainable=False)
         with tf.name_scope('policy_ops'):
             self.assign_op = [old.assign(new) for old, new in zip(old_vars, pi_vars)]
             self.sample_op = self.policy.sample(1)
@@ -153,22 +155,24 @@ class TNPGModel(object):
         print(' [*] Building summaries...')
         model_variance = tf.reduce_mean(self.policy._scale)
         self.sums = tf.summary.merge([
-            tf.summary.scalar('rewards', self.reward),
-            tf.summary.scalar('advantage', self.advantage),
+            tf.summary.scalar('max_rewards', tf.reduce_max(self.reward)),
+            tf.summary.scalar('mean_advantage', tf.reduce_mean(self.advantage)),
             tf.summary.scalar('pi_loss', self.pi_loss),
             tf.summary.scalar('v_loss', self.v_loss),
             tf.summary.scalar('model_variance', model_variance)
         ], name='summaries')
 
-        self.sess = tf.Session()
+        config = tf.ConfigProto()
+        # config.gpu_options.allow_growth = True
+        self.sess = tf.Session(config=config)
         self.sess.run(tf.global_variables_initializer())
         print(' [*] Model built finished')
         _, self.counter = load(self.sess, model_dir)
 
 
     def choose_action(self, s):
-        a = self.sess.run(self.sample_op, feed_dict={self.state: s})
-        return a[0]
+        a = self.sess.run(self.sample_op, feed_dict={self.state: s[None, :]})
+        return a[0, :, 0]
 
 
     def update(self, s, a, r, v_iter, pi_iter, writer=None, counter=0):
@@ -209,6 +213,7 @@ class AgentEvaluator(object):
                 if done:
                     break
             ans.append(acc_r)
+        print('Total reward in global step {}: {}'.format(agent.counter, ans[-1]))
         self.records.append(ans)
 
     def to_csv(self, csv_dir):
@@ -258,8 +263,10 @@ if __name__ == '__main__':
     evaluator = AgentEvaluator()
     for it in range(args.iter):
         s, a, r = collect_one_trajectory(env, model, args.ep_maxlen)
-        model.update(s, a, r, v_iter=args.v_iter, pi_iter=args.pi_iter, writer=writer)
-        if it % args.evaluate_every == (args.evaluate_every - 1):
+        model.update(s, a, r, v_iter=args.v_iter, pi_iter=args.pi_iter,
+                     writer=writer, counter=model.counter)
+        model.counter += 1
+        if it % args.evaluate_every == 1:
             evaluator.evaluate(env, model)
 
     evaluator.to_csv(os.path.join('./logs/records/' + env_name, 'TNPG.csv'))
