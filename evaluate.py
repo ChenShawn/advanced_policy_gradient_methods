@@ -55,4 +55,4 @@ def plot_from_files(dir, savefig=None):
 
 if __name__ == '__main__':
     plot_from_csv(os.path.join('./logs/records/MountainCarContinuous-v0/', 'TNPG.csv'),
-                  savefig=os.path.join('./logs/records/MountainCarContinuous-v0/TNPG.svg')
+                  savefig=os.path.join('./logs/records/MountainCarContinuous-v0/TNPG.svg'))
