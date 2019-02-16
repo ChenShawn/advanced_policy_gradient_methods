@@ -1,28 +1,32 @@
 import tensorflow as tf
 import gym
+from gym.wrappers import Monitor
 import argparse
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.style as mstyle
 import os
+from queue import Queue
 
 from utils import save, load
+EPSILON = 1e-10
 
 
 def add_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-i', '--iter', type=int, default=3000, help='Number of total iterations')
-    parser.add_argument('--v_lr', type=float, default=2e-4, help='Learning rate of value function update')
-    parser.add_argument('--pi_lr', type=float, default=1e-4, help='Learning rate of policy update')
+    parser.add_argument('-i', '--iter', type=int, default=3000, help='Nnumber of total iterations')
+    parser.add_argument('-b', '--batch_size', type=int, default=128, help='batch size')
+    parser.add_argument('--v_lr', type=float, default=2e-4, help='learning rate of value function update')
+    parser.add_argument('--pi_lr', type=float, default=1e-4, help='learning rate of policy update')
     parser.add_argument('--gamma', type=float, default=0.9, help='discounted reward')
-    parser.add_argument('--ep_maxlen', type=int, default=200, help='the maximum length of one episode')
-    parser.add_argument('--v_iter', type=int, default=10, help='number of iterations to train v')
-    parser.add_argument('--pi_iter', type=int, default=10, help='number of iterations to train pi')
+    parser.add_argument('--ep_maxlen', type=int, default=2000, help='maximum length of one episode')
+    parser.add_argument('--v_iter', type=int, default=5, help='number of iterations to train v')
+    parser.add_argument('--pi_iter', type=int, default=5, help='number of iterations to train pi')
     parser.add_argument('--delta', type=float, default=1e-3, help='size of trust region')
     parser.add_argument('--model_dir', type=str, default='./ckpt/tnpg/', help='model directory')
     parser.add_argument('--logdir', type=str, default='./logs/tnpg/', help='log directory')
-    parser.add_argument('--evaluate_every', type=int, default=20, help='number of iterations to evaluate agent')
+    parser.add_argument('--evaluate_every', type=int, default=50, help='number of iterations to evaluate agent')
     return parser.parse_args()
 
 
@@ -63,62 +67,75 @@ def build_conjugate_gradient(x, kl_grad, variable, n_iter=10, func_Ax=hessian_ve
     for k in range(n_iter):
         Ap = func_Ax(p, kl_grad, variable)
         p_dot_Ap = tf.reduce_sum(p * Ap)
-        alpha = r_dot_r / (p_dot_Ap + 1e-8)
+        alpha = r_dot_r / (p_dot_Ap + EPSILON)
         x = x + alpha * p
         r = r - alpha * Ap
         r_dot_r_new = tf.reduce_sum(tf.square(r))
-        beta = r_dot_r_new / (r_dot_r + 1e-8)
+        beta = r_dot_r_new / (r_dot_r + EPSILON)
         r_dot_r = r_dot_r_new
         p = r + beta * p
     return x
 
 
-def collect_one_trajectory(env, agent, maxlen, normalize_state=False, normalize_reward=False):
-    """collect_one_trajectory
-    :param env: type gym.Env registered
-    :param agent: type TNPGModel
-    :param maxlen: maximum length of each trajectory
-    :param normalize_state: whether normalizing observations
-    :param normalize_reward: whether normalizing rewards
-    :return: triplet (s, a, r) of type np.array
+def collect_multi_batch(env, agent, maxlen, batch_size=64, qsize=5):
+    """collect_multi_batch
+    See collect_one_trajectory docstring
+    :return: three lists of batch data (s, a, r)
     """
-    s = env.reset()
+    que = []
+    s_init = env.reset()
+    que.append(s_init[None, :])
+    for it in range(qsize - 1):
+        st, r, done, _ = env.step([-0.99])
+        que.append(st[None, :])
     # Interact with environment
     buffer_s, buffer_a, buffer_r = [], [], []
     for it in range(maxlen):
-        if normalize_state:
-            s = np.clip((s - s.mean()) / s.std(), -5.0, 5.0)
+        # The idea works on Atari games
+        # if normalize_state:
+        #     s = np.clip((s - s.mean()) / s.std(), -5.0, 5.0)
+        s = np.concatenate(que, axis=-1)
         a = agent.choose_action(s)
-        buffer_s.append(s[None, :])
+        buffer_s.append(s)
         s, r, done, _ = env.step(a)
+        que.pop(0)
+        que.append(s[None, :])
         buffer_a.append(a[None, :])
-        if normalize_reward:
-            r = (r - 8.0) / 8.0
+        r = (r + 0.3) * 2.0
         buffer_r.append(r)
         if done:
             break
     # Accumulate rewards
-    gamma = 1.0
+    discounted = 1.0
     for it in range(len(buffer_r) - 2, -1, -1):
-        buffer_r[it] = buffer_r[it + 1] + gamma * buffer_r[it]
-        gamma *= args.gamma
-    states_array = np.concatenate(buffer_s, axis=0)
-    actions_array = np.concatenate(buffer_a, axis=0)
-    rewards_array = np.array(buffer_r, dtype=np.float32)[:, None]
-    return states_array, actions_array, rewards_array
+        buffer_r[it] = buffer_r[it + 1] + discounted * buffer_r[it]
+        discounted *= args.gamma
+    state_data, action_data, reward_data = [], [], []
+    for it in range(0, maxlen, batch_size):
+        if it >= len(buffer_s):
+            break
+        states_array = np.concatenate(buffer_s[it: it + batch_size], axis=0)
+        actions_array = np.concatenate(buffer_a[it: it + batch_size], axis=0)
+        rewards_array = np.array(buffer_r[it: it + batch_size], dtype=np.float32)[:, None]
+        # rewards_array = np.clip(rewards_array, -1.0, 5.0)
+        state_data.append(states_array)
+        action_data.append(actions_array)
+        reward_data.append(rewards_array)
+    return state_data, action_data, reward_data
 
 
 class TNPGModel(object):
     def __init__(self, v_lr, pi_lr, model_dir, delta=1e-3):
-        self.state = tf.placeholder(tf.float32, [None, 2], name='state')
+        self.state = tf.placeholder(tf.float32, [None, 10], name='state')
         self.action = tf.placeholder(tf.float32, [None, 1], name='action')
         self.reward = tf.placeholder(tf.float32, [None, 1], name='reward')
 
         # Advantage function definition
         print(' [*] Building advantage function...')
+        kwargs = {'kernel_initializer': tf.orthogonal_initializer()}
         with tf.variable_scope('value'):
-            h1 = tf.layers.dense(self.state, 128, activation=tf.nn.relu, name='h1')
-            self.value = tf.layers.dense(h1, 1, activation=None, name='value')
+            h1 = tf.layers.dense(self.state, 128, activation=tf.nn.relu, name='h1', **kwargs)
+            self.value = tf.layers.dense(h1, 1, activation=None, name='value', **kwargs)
             self.advantage = self.reward - self.value
 
             self.v_loss = tf.reduce_mean(tf.square(self.advantage))
@@ -128,9 +145,9 @@ class TNPGModel(object):
         # Policy function definition
         print(' [*] Building policy function...')
         self.policy, pi_vars = build_gaussian_network(self.state, 1, scope='policy')
-        old_policy, old_vars = build_gaussian_network(self.state, 1, scope='old_policy', trainable=False)
+        old_policy, old_vars = build_gaussian_network(self.state, 1, scope='policy', trainable=False, reuse=True)
         with tf.name_scope('policy_ops'):
-            self.assign_op = [old.assign(new) for old, new in zip(old_vars, pi_vars)]
+            # self.assign_op = [old.assign(new) for old, new in zip(old_vars, pi_vars)]
             self.sample_op = self.policy.sample(1)
         with tf.name_scope('surrogate_loss'):
             ratio = self.policy.prob(self.action) / old_policy.prob(self.action)
@@ -149,8 +166,8 @@ class TNPGModel(object):
             conj_grads = []
             for grad, kl_grad, var in zip(pi_grads, kl_grads, pi_vars):
                 conj = build_conjugate_gradient(grad, kl_grad, var)
-                nat_grad = tf.sqrt((2.0 * delta) / tf.reduce_sum(grad * conj)) * conj
-                conj_grads.append((conj, nat_grad))
+                nat_grad = tf.sqrt((2.0 * delta) / (tf.reduce_sum(grad * conj) + EPSILON)) * conj
+                conj_grads.append((nat_grad, var))
             self.pi_train = optim.apply_gradients(conj_grads)
 
         # Summaries definition
@@ -173,13 +190,13 @@ class TNPGModel(object):
 
 
     def choose_action(self, s):
-        a = self.sess.run(self.sample_op, feed_dict={self.state: s[None, :]})
+        a = self.sess.run(self.sample_op, feed_dict={self.state: s})
         return a[0, :, 0]
 
 
     def update(self, s, a, r, v_iter, pi_iter, writer=None, counter=0):
         feed_dict = {self.state: s, self.action: a, self.reward: r}
-        self.sess.run(self.assign_op)
+        # self.sess.run(self.assign_op)
         # update policy
         for _ in range(pi_iter):
             self.sess.run(self.pi_train, feed_dict=feed_dict)
@@ -198,18 +215,23 @@ class TNPGModel(object):
 class AgentEvaluator(object):
     records = []
 
-    def evaluate(self, env, agent, num_episode=10, gamma=0.9, maxlen=200, norm_state=False):
-        s = env.reset()
+    def evaluate(self, env, agent, num_episode=10, gamma=0.9, maxlen=200, qsize=5):
         ans = []
         for it in range(num_episode):
             acc_r = 0.0
             coeff = 1.0
+            s0 = env.reset()
+            que = [s0[None, :]]
+            for it in range(qsize - 1):
+                st, r, done, info = env.step(env.action_space.sample())
+                que.append(st[None, :])
             for jt in range(maxlen):
                 env.render()
-                if norm_state:
-                    s = np.clip((s - s.mean()) / s.std(), -5.0, 5.0)
+                s = np.concatenate(que, axis=-1)
                 a = agent.choose_action(s)
-                s, r, done, _ = env.step(a)
+                st, r, done, _ = env.step(a)
+                que.pop(0)
+                que.append(st[None, :])
                 acc_r += coeff * r
                 coeff *= gamma
                 if done:
@@ -217,6 +239,21 @@ class AgentEvaluator(object):
             ans.append(acc_r)
         print('Total reward in global step {}: {}'.format(agent.counter, ans[-1]))
         self.records.append(ans)
+
+    def record_video(self, env, agent, norm_state=False):
+        """record_video
+        :param env: should be a gym.Env wrapped by Monitor
+        :param record_dir: where to save the video
+        """
+        s = env.reset()
+        while True:
+            env.render()
+            if norm_state:
+                s = np.clip((s - s.mean()) / s.std(), -5.0, 5.0)
+            a = agent.choose_action(s)
+            s, r, done, _ = env.step(a)
+            if done:
+                break
 
     def to_csv(self, csv_dir):
         df = pd.DataFrame()
@@ -254,6 +291,9 @@ if __name__ == '__main__':
     env_name = 'MountainCarContinuous-v0'
     args = add_arguments()
     env = gym.make(env_name)
+    recoder = Monitor(env, directory='./logs/records/' + env_name, resume=True,
+                      video_callable=lambda x: x % args.evaluate_every == 10)
+    recoder._max_episode_steps = 2 * args.ep_maxlen
 
     # Definition of global variables
     A_DIM = env.action_space.shape[0]
@@ -264,11 +304,18 @@ if __name__ == '__main__':
     writer = tf.summary.FileWriter(args.logdir, model.sess.graph)
     evaluator = AgentEvaluator()
     for it in range(args.iter):
-        s, a, r = collect_one_trajectory(env, model, args.ep_maxlen)
-        model.update(s, a, r, v_iter=args.v_iter, pi_iter=args.pi_iter,
-                     writer=writer, counter=model.counter)
-        model.counter += 1
+        # The trajectory obtained via this way would be too long for a batch of input
+        # s, a, r = collect_one_trajectory(env, model, args.ep_maxlen)
+        slist, alist, rlist = collect_multi_batch(env, model, maxlen=args.ep_maxlen,
+                                                  batch_size=args.batch_size)
+        for s, a, r in zip(slist, alist, rlist):
+            model.update(s, a, r, v_iter=args.v_iter, pi_iter=args.pi_iter,
+                         writer=writer, counter=model.counter)
+            model.counter += 1
         if it % args.evaluate_every == 1:
-            evaluator.evaluate(env, model)
+            evaluator.evaluate(env, model, maxlen=args.ep_maxlen)
+            # evaluator.record_video(recoder, model)
 
-    evaluator.to_csv(os.path.join('./logs/records/' + env_name, 'TNPG.csv'))
+    print(model.sess)
+    save(model.sess, './ckpt/tnpg/', env_name, model.counter)
+    evaluator.to_csv(os.path.join('./logs/records/' + env_name, 'tnpg.csv'))

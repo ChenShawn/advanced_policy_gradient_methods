@@ -30,3 +30,5 @@ def load(sess, model_path):
     else:
         print(" [*] Failed to find a checkpoint")
         return False, 0
+
+
