@@ -19,6 +19,7 @@ def add_arguments():
     parser.add_argument('--ep_maxlen', type=int, default=200, help='the maximum length of one episode')
     parser.add_argument('--v_iter', type=int, default=10, help='number of iterations to train v')
     parser.add_argument('--pi_iter', type=int, default=10, help='number of iterations to train pi')
+    parser.add_argument('--delta', type=float, default=1e-3, help='size of trust region')
     parser.add_argument('--model_dir', type=str, default='./ckpt/tnpg/', help='model directory')
     parser.add_argument('--logdir', type=str, default='./logs/tnpg/', help='log directory')
     parser.add_argument('--evaluate_every', type=int, default=20, help='number of iterations to evaluate agent')
@@ -108,7 +109,7 @@ def collect_one_trajectory(env, agent, maxlen, normalize_state=False, normalize_
 
 
 class TNPGModel(object):
-    def __init__(self, v_lr, pi_lr, model_dir):
+    def __init__(self, v_lr, pi_lr, model_dir, delta=1e-3):
         self.state = tf.placeholder(tf.float32, [None, 2], name='state')
         self.action = tf.placeholder(tf.float32, [None, 1], name='action')
         self.reward = tf.placeholder(tf.float32, [None, 1], name='reward')
@@ -148,7 +149,8 @@ class TNPGModel(object):
             conj_grads = []
             for grad, kl_grad, var in zip(pi_grads, kl_grads, pi_vars):
                 conj = build_conjugate_gradient(grad, kl_grad, var)
-                conj_grads.append((conj, var))
+                nat_grad = tf.sqrt((2.0 * delta) / tf.reduce_sum(grad * conj)) * conj
+                conj_grads.append((conj, nat_grad))
             self.pi_train = optim.apply_gradients(conj_grads)
 
         # Summaries definition
@@ -258,7 +260,7 @@ if __name__ == '__main__':
     A_LOWER = env.action_space.low[0]
     A_HIGHER = env.action_space.high[0]
 
-    model = TNPGModel(args.v_lr, args.pi_lr, args.model_dir)
+    model = TNPGModel(args.v_lr, args.pi_lr, args.model_dir, delta=args.delta)
     writer = tf.summary.FileWriter(args.logdir, model.sess.graph)
     evaluator = AgentEvaluator()
     for it in range(args.iter):
