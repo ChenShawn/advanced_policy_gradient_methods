@@ -20,12 +20,12 @@ In this file we use the Pendulum-v0 environment.
 def add_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--iter', type=int, default=3000, help='Nnumber of total iterations')
-    parser.add_argument('-b', '--batch_size', type=int, default=99, help='batch size')
+    parser.add_argument('-b', '--batch_size', type=int, default=32, help='batch size')
     parser.add_argument('--ep_maxlen', type=int, default=200, help='max length of each episode')
     parser.add_argument('--v_lr', type=float, default=1e-4, help='learning rate of value function update')
     parser.add_argument('--gamma', type=float, default=0.9, help='discounted reward')
-    parser.add_argument('--v_iter', type=int, default=4, help='number of iterations to train v')
-    parser.add_argument('--pi_iter', type=int, default=2, help='number of iterations to train pi')
+    parser.add_argument('--v_iter', type=int, default=10, help='number of iterations to train v')
+    parser.add_argument('--pi_iter', type=int, default=10, help='number of iterations to train pi')
     parser.add_argument('--delta', type=float, default=1e-3, help='size of trust region')
     parser.add_argument('--model_dir', type=str, default='./ckpt/trpo/', help='model directory')
     parser.add_argument('--logdir', type=str, default='./logs/trpo/', help='log directory')
@@ -180,10 +180,10 @@ class TRPOModel(object):
             feed_dict[self.alpha] = alpha
             self.sess.run(self.assign_new, feed_dict=feed_dict)
             kl, old, new = self.sess.run([self.kl, self.pi_loss_old, self.pi_loss_new], feed_dict=feed_dict)
-            if np.all(kl < self.delta) and new > old:
+            if np.all(kl < self.delta) and new < old:
                 self.sess.run(self.assign_old)
-                info = '{}: --Global-step {} --Accept model update with alpha={}'
-                print(info.format(datetime.now(), self.counter, alpha))
+                info = 'Global-step {} --Accept update with alpha={}, kl={}, old={}, new={}'
+                print(info.format(self.counter, alpha, kl.mean(), old, new))
                 return alpha
             else:
                 alpha *= 0.5
@@ -195,6 +195,7 @@ class TRPOModel(object):
         # update policy
         for _ in range(pi_iter):
             self.line_search(s, a, r)
+
         # update value function
         for _ in range(v_iter):
             self.sess.run(self.v_train, feed_dict=feed_dict)
@@ -225,6 +226,8 @@ if __name__ == '__main__':
     writer = tf.summary.FileWriter(args.logdir, model.sess.graph)
     evaluator = AgentEvaluator()
 
+    # Start to train
+    model.sess.run(model.assign_old)
     for it in range(args.iter):
         slist, alist, rlist = collect_multi_batch(env, model, maxlen=args.ep_maxlen,
                                                   batch_size=args.batch_size)
