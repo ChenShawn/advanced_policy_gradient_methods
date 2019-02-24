@@ -10,12 +10,12 @@ from utils import save, load
 
 def add_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-i', '--iter', type=int, default=1000, help='Nnumber of total iterations')
+    parser.add_argument('-i', '--iter', type=int, default=5000, help='Nnumber of total iterations')
     parser.add_argument('-b', '--batch_size', type=int, default=32, help='batch size')
     parser.add_argument('--method', type=str, default='clip', help='either kl_pen or clip')
     parser.add_argument('--ep_maxlen', type=int, default=200, help='max length of each episode')
-    parser.add_argument('--v_lr', type=float, default=1e-4, help='learning rate of value function update')
-    parser.add_argument('--pi_lr', type=float, default=2e-4, help='learning rate of policy function')
+    parser.add_argument('--v_lr', type=float, default=2e-4, help='learning rate of value function update')
+    parser.add_argument('--pi_lr', type=float, default=1e-4, help='learning rate of policy function')
     parser.add_argument('--gamma', type=float, default=0.9, help='discounted reward')
     parser.add_argument('--v_iter', type=int, default=10, help='number of iterations to train v')
     parser.add_argument('--pi_iter', type=int, default=10, help='number of iterations to train pi')

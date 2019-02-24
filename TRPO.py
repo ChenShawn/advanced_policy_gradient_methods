@@ -74,10 +74,12 @@ def collect_multi_batch(env, agent, maxlen, batch_size=64, qsize=2, gamma=0.9):
         if done:
             break
     # Accumulate rewards
-    discounted = 1.0
-    for it in range(len(buffer_r) - 2, -1, -1):
-        buffer_r[it] = buffer_r[it + 1] + discounted * buffer_r[it]
-        discounted *= gamma
+    discounted_r = []
+    last_value = agent.value_estimate(np.concatenate(que, axis=-1))
+    for r in buffer_r[::-1]:
+        last_value = r + gamma * last_value
+        discounted_r.append(last_value)
+    discounted_r.reverse()
     state_data, action_data, reward_data = [], [], []
     for it in range(0, maxlen, batch_size):
         if it >= len(buffer_s):
@@ -202,6 +204,10 @@ class TRPOModel(object):
         if writer is not None:
             sumstr = self.sess.run(self.sums, feed_dict=feed_dict)
             writer.add_summary(sumstr, counter)
+
+
+    def value_estimate(self, s):
+        return self.sess.run(self.value, feed_dict={self.state: s})[0, 0]
 
 
 
