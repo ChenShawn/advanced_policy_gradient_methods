@@ -56,7 +56,7 @@ def plot_from_files(dir, savefig=None):
 class AgentEvaluator(object):
     records = []
 
-    def evaluate(self, env, agent, num_episode=10, gamma=0.9, maxlen=200, qsize=5):
+    def evaluate(self, env, agent, num_episode=10, gamma=0.9, maxlen=200, qsize=2, render=True):
         ans = []
         for it in range(num_episode):
             acc_r = 0.0
@@ -67,7 +67,8 @@ class AgentEvaluator(object):
                 st, r, done, info = env.step(env.action_space.sample())
                 que.append(st[None, :])
             for jt in range(maxlen):
-                env.render()
+                if render:
+                    env.render()
                 s = np.concatenate(que, axis=-1)
                 a = agent.choose_action(s)
                 st, r, done, _ = env.step(a)
@@ -83,7 +84,7 @@ class AgentEvaluator(object):
         self.records.append(ans)
 
 
-    def record_video(self, env, agent, qsize=5):
+    def record_video(self, env, agent, qsize=2, maxlen=200):
         """record_video
         :param env: should be a gym.Env wrapped by Monitor
         :param record_dir: where to save the video
@@ -93,7 +94,7 @@ class AgentEvaluator(object):
         for _ in range(qsize - 1):
             s, r, done, info = env.step(env.action_space.sample())
             que.append(s[None, :])
-        while True:
+        for _ in range(maxlen):
             env.render()
             s = np.concatenate(que, axis=-1)
             a = agent.choose_action(s)

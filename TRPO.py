@@ -20,9 +20,9 @@ In this file we use the Pendulum-v0 environment.
 def add_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--iter', type=int, default=3000, help='Nnumber of total iterations')
-    parser.add_argument('-b', '--batch_size', type=int, default=128, help='batch size')
-    parser.add_argument('--ep_maxlen', type=int, default=500, help='max length of each episode')
-    parser.add_argument('--v_lr', type=float, default=2e-4, help='learning rate of value function update')
+    parser.add_argument('-b', '--batch_size', type=int, default=99, help='batch size')
+    parser.add_argument('--ep_maxlen', type=int, default=200, help='max length of each episode')
+    parser.add_argument('--v_lr', type=float, default=1e-4, help='learning rate of value function update')
     parser.add_argument('--gamma', type=float, default=0.9, help='discounted reward')
     parser.add_argument('--v_iter', type=int, default=4, help='number of iterations to train v')
     parser.add_argument('--pi_iter', type=int, default=2, help='number of iterations to train pi')
@@ -33,7 +33,7 @@ def add_arguments():
     return parser.parse_args()
 
 
-def build_gaussian_network(input_op, output_dim, scope, mu_scale=1.0, trainable=True, reuse=False):
+def build_gaussian_network(input_op, output_dim, scope, mu_scale=2.0, trainable=True, reuse=False):
     """build_gaussian_network
     :param output_dim: tye int representing the dimension of the output
     :return: two values, type (tf.distributions.Normal, list[trainable_vars])
@@ -41,14 +41,14 @@ def build_gaussian_network(input_op, output_dim, scope, mu_scale=1.0, trainable=
     kwargs = {'trainable': trainable, 'kernel_initializer': tf.orthogonal_initializer()}
     with tf.variable_scope(scope, reuse=reuse):
         h1 = tf.layers.dense(input_op, 128, activation=tf.nn.relu, **kwargs)
-        mu = mu_scale * tf.layers.dense(h1, output_dim, activation=tf.nn.tanh, **kwargs) * 2.0
+        mu = mu_scale * tf.layers.dense(h1, output_dim, activation=tf.nn.tanh, **kwargs)
         sigma = tf.layers.dense(h1, output_dim, activation=tf.nn.softplus, **kwargs)
         gaussian = tf.distributions.Normal(mu, sigma)
     train_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=scope)
     return gaussian, train_vars
 
 
-def collect_multi_batch(env, agent, maxlen, batch_size=64, qsize=5, gamma=0.9):
+def collect_multi_batch(env, agent, maxlen, batch_size=64, qsize=2, gamma=0.9):
     """collect_multi_batch
     See collect_one_trajectory docstring
     :return: three lists of batch data (s, a, r)
@@ -95,7 +95,7 @@ def collect_multi_batch(env, agent, maxlen, batch_size=64, qsize=5, gamma=0.9):
 
 class TRPOModel(object):
     def __init__(self, v_lr, model_dir, delta=1e-3):
-        self.state = tf.placeholder(tf.float32, [None, 15], name='state')
+        self.state = tf.placeholder(tf.float32, [None, 6], name='state')
         self.action = tf.placeholder(tf.float32, [None, 1], name='action')
         self.reward = tf.placeholder(tf.float32, [None, 1], name='reward')
         self.alpha = tf.placeholder(tf.float32, name='alpha')
@@ -154,7 +154,8 @@ class TRPOModel(object):
         self.sums = tf.summary.merge([
             tf.summary.scalar('max_rewards', tf.reduce_max(self.reward)),
             tf.summary.scalar('mean_advantage', tf.reduce_mean(self.advantage)),
-            tf.summary.scalar('pi_loss', self.pi_loss_old),
+            tf.summary.scalar('pi_loss_old', self.pi_loss_old),
+            tf.summary.scalar('pi_loss_new', self.pi_loss_new),
             tf.summary.scalar('v_loss', self.v_loss),
             tf.summary.scalar('model_variance', model_variance)
         ], name='summaries')
@@ -215,6 +216,8 @@ if __name__ == '__main__':
     env = gym.make(env_name).unwrapped
     recoder = Monitor(env, directory='./logs/records/' + env_name, resume=True,
                       video_callable=lambda x: x > 0)
+    recoder._max_episode_steps = args.ep_maxlen
+
     STATE_SHAPE = env.observation_space.shape
     ACTION_SHAPE = env.action_space.shape
 
@@ -231,7 +234,7 @@ if __name__ == '__main__':
             model.counter += 1
         if it % args.evaluate_every == 10:
             evaluator.evaluate(env, model, maxlen=args.ep_maxlen)
-            evaluator.record_video(recoder, model)
+            # evaluator.record_video(recoder, model, maxlen=args.ep_maxlen)
 
     save(model.sess, './ckpt/trpo/', env_name, model.counter)
     evaluator.to_csv(os.path.join('./logs/records/' + env_name, 'trpo.csv'))
