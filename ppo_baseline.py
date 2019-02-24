@@ -12,7 +12,7 @@ def add_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument('-i', '--iter', type=int, default=1000, help='Nnumber of total iterations')
     parser.add_argument('-b', '--batch_size', type=int, default=32, help='batch size')
-    parser.add_argument('--method', type=str, default='kl_pen', help='either kl_pen or clip')
+    parser.add_argument('--method', type=str, default='clip', help='either kl_pen or clip')
     parser.add_argument('--ep_maxlen', type=int, default=200, help='max length of each episode')
     parser.add_argument('--v_lr', type=float, default=1e-4, help='learning rate of value function update')
     parser.add_argument('--pi_lr', type=float, default=2e-4, help='learning rate of policy function')
@@ -38,14 +38,15 @@ class PPO(object):
             self.v = tf.layers.dense(l1, 1)
             self.advantage = self.tfdc_r - self.v
             self.v_loss = tf.reduce_mean(tf.square(self.advantage))
+            v_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='value')
 
         # Actor (Function pi(a|s) following behavior policy)
-        pi, pi_params = self._build_anet('pi', a_dim, trainable=True)
-        oldpi, oldpi_params = self._build_anet('oldpi', a_dim, trainable=False)
+        pi, pi_vars = self._build_policy('pi', a_dim, trainable=True)
+        oldpi, oldpi_vars = self._build_policy('oldpi', a_dim, trainable=False)
         with tf.variable_scope('sample_action'):
             self.sample_op = tf.squeeze(pi.sample(1), axis=0)
         with tf.variable_scope('update_oldpi'):
-            self.update_oldpi_op = [oldp.assign(p) for p, oldp in zip(pi_params, oldpi_params)]
+            self.update_oldpi_op = [oldp.assign(p) for p, oldp in zip(pi_vars, oldpi_vars)]
 
         # self.tfadv = tf.placeholder(tf.float32, [None, 1], 'advantage')
         self.tfadv = tf.stop_gradient(self.advantage)
@@ -54,10 +55,10 @@ class PPO(object):
                 # ratio = tf.exp(pi.log_prob(self.tfa) - oldpi.log_prob(self.tfa))
                 ratio = pi.prob(self.tfa) / oldpi.prob(self.tfa)
                 surr = ratio * self.tfadv
-            if method['name'] == 'kl_pen':
-                self.tflam = tf.placeholder(tf.float32, None, 'lambda')
                 kl = tf.distributions.kl_divergence(oldpi, pi)
                 self.kl_mean = tf.reduce_mean(kl)
+            if method['name'] == 'kl_pen':
+                self.tflam = tf.placeholder(tf.float32, None, 'lambda')
                 self.pi_loss = -tf.reduce_mean(surr - self.tflam * kl)
             elif method['name'] == 'clip':
                 self.pi_loss = -tf.reduce_mean(tf.minimum(
@@ -68,8 +69,8 @@ class PPO(object):
                 raise NotImplementedError
 
         with tf.variable_scope('train_ops'):
-            self.ctrain_op = tf.train.AdamOptimizer(v_lr).minimize(self.v_loss)
-            self.atrain_op = tf.train.AdamOptimizer(pi_lr).minimize(self.pi_loss)
+            self.ctrain_op = tf.train.AdamOptimizer(v_lr).minimize(self.v_loss, var_list=v_vars)
+            self.atrain_op = tf.train.AdamOptimizer(pi_lr).minimize(self.pi_loss, var_list=pi_vars)
 
         self.sums = tf.summary.merge([
             tf.summary.scalar('mean_reward', tf.reduce_mean(self.tfdc_r)),
@@ -113,8 +114,9 @@ class PPO(object):
         self.counter += 1
 
 
-    def _build_anet(self, n_out, name, trainable=True, reuse=False):
-        params = {'trainable': trainable, 'kernel_initializer': tf.orthogonal_initializer()}
+    def _build_policy(self, name, n_out, trainable=True, reuse=False):
+        # params = {'trainable': trainable, 'kernel_initializer': tf.orthogonal_initializer()}
+        params = {'trainable': trainable}
         with tf.variable_scope(name, reuse=reuse):
             l1 = tf.layers.dense(self.tfs, 100, tf.nn.relu, **params)
             mu = 2.0 * tf.layers.dense(l1, n_out, tf.nn.tanh, **params)
@@ -148,7 +150,7 @@ if __name__ == '__main__':
 
     if not os.path.exists(args.model_dir):
         os.makedirs(args.model_dir)
-    if not os.path.exists(args.log_dir):
+    if not os.path.exists(args.logdir):
         os.makedirs(args.logdir)
 
     env = gym.make(env_name).unwrapped

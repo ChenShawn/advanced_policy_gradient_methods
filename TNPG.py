@@ -288,6 +288,11 @@ class AgentEvaluator(object):
 if __name__ == '__main__':
     env_name = 'MountainCarContinuous-v0'
     args = add_arguments()
+    if not os.path.exists(args.model_dir):
+        os.makedirs(args.model_dir)
+    if not os.path.exists(args.logdir):
+        os.makedirs(args.logdir)
+
     env = gym.make(env_name)
     recoder = Monitor(env, directory='./logs/records/' + env_name, resume=True,
                       video_callable=lambda x: x % args.evaluate_every == 10)
