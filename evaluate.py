@@ -53,6 +53,89 @@ def plot_from_files(dir, savefig=None):
 
 
 
+class AgentEvaluator(object):
+    records = []
+
+    def evaluate(self, env, agent, num_episode=10, gamma=0.9, maxlen=200, qsize=5):
+        ans = []
+        for it in range(num_episode):
+            acc_r = 0.0
+            coeff = 1.0
+            s0 = env.reset()
+            que = [s0[None, :]]
+            for it in range(qsize - 1):
+                st, r, done, info = env.step(env.action_space.sample())
+                que.append(st[None, :])
+            for jt in range(maxlen):
+                env.render()
+                s = np.concatenate(que, axis=-1)
+                a = agent.choose_action(s)
+                st, r, done, _ = env.step(a)
+                r = (r + 8.0) / 8.0
+                que.pop(0)
+                que.append(st[None, :])
+                acc_r += coeff * r
+                coeff *= gamma
+                if done:
+                    break
+            ans.append(acc_r)
+        print('Total reward in global step {}: {}'.format(agent.counter, ans[-1]))
+        self.records.append(ans)
+
+
+    def record_video(self, env, agent, qsize=5):
+        """record_video
+        :param env: should be a gym.Env wrapped by Monitor
+        :param record_dir: where to save the video
+        """
+        s = env.reset()
+        que = [s[None, :]]
+        for _ in range(qsize - 1):
+            s, r, done, info = env.step(env.action_space.sample())
+            que.append(s[None, :])
+        while True:
+            env.render()
+            s = np.concatenate(que, axis=-1)
+            a = agent.choose_action(s)
+            s, r, done, _ = env.step(a)
+            que.append(s[None, :])
+            que.pop(0)
+            if done:
+                break
+
+
+    def to_csv(self, csv_dir):
+        df = pd.DataFrame()
+        array = np.array(self.records, dtype=np.float32)
+        df['step'] = np.arange(len(self.records), dtype=np.int32)
+        df['reward_mean'] = array.mean(axis=-1)
+        df['reward_std'] = array.std(axis=-1)
+        df['reward_smooth'] = df['reward_mean'].ewm(span=20).mean()
+        df['upper_bound'] = df['reward_mean'] + df['reward_std']
+        df['lower_bound'] = df['reward_mean'] - df['reward_std']
+        print(' [*] csv file successfully saved in ' + csv_dir)
+        df.to_csv(csv_dir)
+
+
+    def plot_from_csv(self, csv_dir, savefig=None):
+        df = pd.read_csv(csv_dir)
+
+        mstyle.use('ggplot')
+        plt.figure()
+        plt.plot(np.arange(df['reward_mean'].__len__()), df['reward_smooth'], color='orange')
+        plt.fill_between(np.arange(df['reward_smooth'].__len__()),
+                         df['upper_bound'],
+                         df['lower_bound'],
+                         color='orange', alpha=0.2)
+        plt.ylabel('Averaged reward')
+        plt.xlabel('Steps of env interaction')
+        plt.title('TNPG on {}'.format(csv_dir.split('.')[0]))
+        if savefig is not None and type(savefig) is str:
+            plt.savefig(savefig, format='svg')
+        plt.show()
+
+
+
 if __name__ == '__main__':
     plot_from_csv(os.path.join('./logs/records/MountainCarContinuous-v0/', 'TNPG.csv'),
                   savefig=os.path.join('./logs/records/MountainCarContinuous-v0/TNPG.svg'))

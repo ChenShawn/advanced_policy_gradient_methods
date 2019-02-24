@@ -7,7 +7,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.style as mstyle
 import os
-from queue import Queue
 
 from utils import save, load
 EPSILON = 1e-10
@@ -258,14 +257,13 @@ class AgentEvaluator(object):
     def to_csv(self, csv_dir):
         df = pd.DataFrame()
         array = np.array(self.records, dtype=np.float32)
-        info = list(map(lambda ll: ', '.join(ll), self.records))
         df['step'] = np.arange(len(self.records), dtype=np.int32)
         df['reward_mean'] = array.mean(axis=-1)
         df['reward_std'] = array.std(axis=-1)
         df['reward_smooth'] = df['reward_mean'].ewm(span=20).mean()
         df['upper_bound'] = df['reward_mean'] + df['reward_std']
         df['lower_bound'] = df['reward_mean'] - df['reward_std']
-        df['info'] = pd.DataFrame(info)
+        print(' [*] csv file successfully saved in ' + csv_dir)
         df.to_csv(csv_dir)
 
     def plot_from_csv(self, csv_dir, savefig=None):
@@ -314,8 +312,7 @@ if __name__ == '__main__':
             model.counter += 1
         if it % args.evaluate_every == 1:
             evaluator.evaluate(env, model, maxlen=args.ep_maxlen)
-            # evaluator.record_video(recoder, model)
+            evaluator.record_video(recoder, model)
 
-    print(model.sess)
     save(model.sess, './ckpt/tnpg/', env_name, model.counter)
     evaluator.to_csv(os.path.join('./logs/records/' + env_name, 'tnpg.csv'))
