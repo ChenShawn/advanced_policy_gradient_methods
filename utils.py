@@ -1,4 +1,6 @@
 import tensorflow as tf
+import numpy as np
+import random
 import os
 import re
 
@@ -65,3 +67,7 @@ def load(sess, model_path):
         return False, 0
 
 
+def set_global_seed(seed):
+    tf.set_random_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)

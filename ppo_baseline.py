@@ -10,7 +10,7 @@ from utils import save, load
 
 def add_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-i', '--iter', type=int, default=5000, help='Nnumber of total iterations')
+    parser.add_argument('-i', '--iter', type=int, default=50, help='number of total iteration')
     parser.add_argument('-b', '--batch_size', type=int, default=32, help='batch size')
     parser.add_argument('--method', type=str, default='clip', help='either kl_pen or clip')
     parser.add_argument('--ep_maxlen', type=int, default=200, help='max length of each episode')
@@ -69,8 +69,8 @@ class PPO(object):
                 raise NotImplementedError
 
         with tf.variable_scope('train_ops'):
-            self.ctrain_op = tf.train.AdamOptimizer(v_lr).minimize(self.v_loss, var_list=v_vars)
-            self.atrain_op = tf.train.AdamOptimizer(pi_lr).minimize(self.pi_loss, var_list=pi_vars)
+            self.vtrain_op = tf.train.AdamOptimizer(v_lr).minimize(self.v_loss, var_list=v_vars)
+            self.pitrain_op = tf.train.AdamOptimizer(pi_lr).minimize(self.pi_loss, var_list=pi_vars)
 
         self.sums = tf.summary.merge([
             tf.summary.scalar('mean_reward', tf.reduce_mean(self.tfdc_r)),
@@ -95,7 +95,7 @@ class PPO(object):
         if self.method['name'] == 'kl_pen':
             feed_dict[self.tflam] = self.method['lam']
             for _ in range(pi_iter):
-                _, kl = self.sess.run([self.atrain_op, self.kl_mean], feed_dict=feed_dict)
+                _, kl = self.sess.run([self.pitrain_op, self.kl_mean], feed_dict=feed_dict)
                 if kl > 4 * self.method['kl_target']:
                     break
             if kl < self.method['kl_target'] / 1.5:
@@ -105,9 +105,9 @@ class PPO(object):
             self.method['lam'] = np.clip(self.method['lam'], 1e-4, 10)
         else:
             for _ in range(pi_iter):
-                self.sess.run(self.atrain_op, feed_dict=feed_dict)
+                self.sess.run(self.pitrain_op, feed_dict=feed_dict)
         for _ in range(v_iter):
-            self.sess.run(self.ctrain_op, feed_dict=feed_dict)
+            self.sess.run(self.vtrain_op, feed_dict=feed_dict)
         if writer is not None:
             sumstr = self.sess.run(self.sums, feed_dict=feed_dict)
             writer.add_summary(sumstr, self.counter)
@@ -128,7 +128,8 @@ class PPO(object):
 
     def choose_action(self, s):
         s = s[np.newaxis, :]
-        return self.sess.run(self.sample_op, feed_dict={self.tfs: s})[0]
+        a = self.sess.run(self.sample_op, feed_dict={self.tfs: s})[0]
+        return np.clip(a, -2.0, 2.0)
 
 
     def get_v(self, s):

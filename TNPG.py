@@ -76,7 +76,7 @@ def build_conjugate_gradient(x, kl_grad, variable, n_iter=10, func_Ax=hessian_ve
     return x
 
 
-def collect_multi_batch(env, agent, maxlen, batch_size=64, qsize=5):
+def collect_multi_batch(env, agent, maxlen, batch_size=64, qsize=5, gamma=0.9):
     """collect_multi_batch
     See collect_one_trajectory docstring
     :return: three lists of batch data (s, a, r)
@@ -105,17 +105,19 @@ def collect_multi_batch(env, agent, maxlen, batch_size=64, qsize=5):
         if done:
             break
     # Accumulate rewards
-    discounted = 1.0
-    for it in range(len(buffer_r) - 2, -1, -1):
-        buffer_r[it] = buffer_r[it + 1] + discounted * buffer_r[it]
-        discounted *= args.gamma
+    discounted_r = []
+    last_value = agent.value_estimate(np.concatenate(que, axis=-1))
+    for r in buffer_r[::-1]:
+        last_value = r + gamma * last_value
+        discounted_r.append(last_value)
+    discounted_r.reverse()
     state_data, action_data, reward_data = [], [], []
     for it in range(0, maxlen, batch_size):
         if it >= len(buffer_s):
             break
         states_array = np.concatenate(buffer_s[it: it + batch_size], axis=0)
         actions_array = np.concatenate(buffer_a[it: it + batch_size], axis=0)
-        rewards_array = np.array(buffer_r[it: it + batch_size], dtype=np.float32)[:, None]
+        rewards_array = np.array(discounted_r[it: it + batch_size], dtype=np.float32)[:, None]
         # rewards_array = np.clip(rewards_array, -1.0, 5.0)
         state_data.append(states_array)
         action_data.append(actions_array)

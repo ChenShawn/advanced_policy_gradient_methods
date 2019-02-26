@@ -24,8 +24,8 @@ def add_arguments():
     parser.add_argument('--ep_maxlen', type=int, default=200, help='max length of each episode')
     parser.add_argument('--v_lr', type=float, default=1e-4, help='learning rate of value function update')
     parser.add_argument('--gamma', type=float, default=0.9, help='discounted reward')
-    parser.add_argument('--v_iter', type=int, default=10, help='number of iterations to train v')
-    parser.add_argument('--pi_iter', type=int, default=10, help='number of iterations to train pi')
+    parser.add_argument('--v_iter', type=int, default=5, help='number of iterations to train v')
+    parser.add_argument('--pi_iter', type=int, default=4, help='number of iterations to train pi')
     parser.add_argument('--delta', type=float, default=1e-3, help='size of trust region')
     parser.add_argument('--model_dir', type=str, default='./ckpt/trpo/', help='model directory')
     parser.add_argument('--logdir', type=str, default='./logs/trpo/', help='log directory')
@@ -62,6 +62,7 @@ def collect_multi_batch(env, agent, maxlen, batch_size=64, qsize=2, gamma=0.9):
     # Interact with environment
     buffer_s, buffer_a, buffer_r = [], [], []
     for it in range(maxlen):
+        env.render()
         s = np.concatenate(que, axis=-1)
         a = agent.choose_action(s)
         buffer_s.append(s)
@@ -86,7 +87,7 @@ def collect_multi_batch(env, agent, maxlen, batch_size=64, qsize=2, gamma=0.9):
             break
         states_array = np.concatenate(buffer_s[it: it + batch_size], axis=0)
         actions_array = np.concatenate(buffer_a[it: it + batch_size], axis=0)
-        rewards_array = np.array(buffer_r[it: it + batch_size], dtype=np.float32)[:, None]
+        rewards_array = np.array(discounted_r[it: it + batch_size], dtype=np.float32)[:, None]
         # rewards_array = np.clip(rewards_array, -1.0, 5.0)
         state_data.append(states_array)
         action_data.append(actions_array)
