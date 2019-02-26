@@ -3,25 +3,25 @@ import numpy as np
 import gym
 import argparse
 import os
-import multiprocessing
+import threading
 import queue
 import signal
 from datetime import datetime
 import psutil
 
-from utils import save, load
+from utils import save, load, set_global_seed
 
 
 """ ================= GLOBAL VARIABLES ================== """
 GLOBAL_QUEUE = queue.Queue()
-UPDATE_EVENT = multiprocessing.Event()
-ROLLING_EVENT = multiprocessing.Event()
-QUEUE_EVENT = multiprocessing.Event()
-TERM_EVENT = multiprocessing.Event()
+UPDATE_EVENT = threading.Event()
+ROLLING_EVENT = threading.Event()
+QUEUE_EVENT = threading.Event()
+TERM_EVENT = threading.Event()
 N_ITER = 1000
 GLOBAL_COUNTER = 0
-PI_ITER = 10
-V_ITER = 10
+PI_ITER = 2
+V_ITER = 2
 EP_MAXLEN = 200
 MAX_QSIZE = 128
 GAMMA = 0.9
@@ -43,14 +43,12 @@ def add_arguments():
     return parser.parse_args()
 
 
-class PPOModel(multiprocessing.Process):
-    def __init__(self, v_lr, pi_lr, s_dim, a_dim, method, logdir):
-        super(PPOModel, self).__init__()
+class PPOModel(object):
+    def __init__(self, v_lr, pi_lr, s_dim, a_dim, method):
         self.state = tf.placeholder(tf.float32, [None, s_dim], 'state')
         self.action = tf.placeholder(tf.float32, [None, a_dim], 'action')
         self.reward = tf.placeholder(tf.float32, [None, 1], 'discounted_r')
         self.method = method
-        signal.signal(signal.SIGTERM, self.sigterm_callback)
 
         # Advantage function estimator
         with tf.variable_scope('value'):
@@ -71,8 +69,8 @@ class PPOModel(multiprocessing.Process):
 
         with tf.variable_scope('loss'):
             with tf.variable_scope('surrogate'):
-                # ratio = tf.exp(pi.log_prob(self.tfa) - oldpi.log_prob(self.tfa))
-                ratio = pi.prob(self.action) / oldpi.prob(self.action)
+                ratio = tf.exp(pi.log_prob(self.action) - oldpi.log_prob(self.action))
+                # ratio = pi.prob(self.action) / oldpi.prob(self.action)
                 surr = ratio * self.advantage
                 kl = tf.distributions.kl_divergence(oldpi, pi)
                 self.kl_mean = tf.reduce_mean(kl)
@@ -99,42 +97,11 @@ class PPOModel(multiprocessing.Process):
             tf.summary.scalar('mean_kl', self.kl_mean),
             tf.summary.scalar('model_variance', tf.reduce_mean(pi._scale))
         ], name='summaries')
-
         config = tf.ConfigProto()
         # config.gpu_options.allow_growth = True
         self.sess = tf.Session(config=config)
         self.sess.run(tf.global_variables_initializer())
-        print(' [*] Model built finished')
-        self.writer = tf.summary.FileWriter(logdir, self.sess.graph)
-
-
-    def run(self):
-        global GLOBAL_COUNTER
-        print(' [*] PPO model update process start to run...')
-        while GLOBAL_COUNTER < N_ITER:
-            # Block model update and release rolling event if global queue is empty
-            if GLOBAL_QUEUE.empty():
-                UPDATE_EVENT.clear()
-                ROLLING_EVENT.set()
-            UPDATE_EVENT.wait()
-
-            while not GLOBAL_QUEUE.empty():
-                self.sess.run(self.update_oldpi_op)
-                s, a, r = GLOBAL_QUEUE.get()
-                feed_dict = {self.state: s, self.action: a, self.reward: r}
-                # Update policy using clipping surrogate
-                for _ in range(PI_ITER):
-                    self.sess.run(self.pitrain_op, feed_dict=feed_dict)
-                # Update value network
-                for _ in range(V_ITER):
-                    self.sess.run(self.vtrain_op, feed_dict=feed_dict)
-                # Collect summaries
-                sumstr = self.sess.run(self.sums, feed_dict=feed_dict)
-                self.writer.add_summary(sumstr, global_step=GLOBAL_COUNTER)
-                GLOBAL_COUNTER += 1
-            print(datetime.now(), '--Iteration {} --Global queue clear'.format(GLOBAL_COUNTER))
-        TERM_EVENT.set()
-        save(self.sess, './ckpt/dppo/', self.__name__, global_step=GLOBAL_COUNTER)
+        print(' [*] Build model finished')
 
 
     def _build_policy(self, name, n_out, trainable=True, reuse=False):
@@ -149,30 +116,72 @@ class PPOModel(multiprocessing.Process):
         return gaussian, vars
 
 
-    def choose_action(self, s):
+    def choose_action(self, s, callback=None):
         s = s[np.newaxis, :]
+        if callback is not None:
+            callback()
         return self.sess.run(self.sample_op, feed_dict={self.state: s})[0]
-
 
     def value_estimate(self, s):
         if s.ndim < 2:
             s = s[np.newaxis, :]
         return self.sess.run(self.v, feed_dict={self.state: s})[0, 0]
 
+    def save(self):
+        model_path = './ckpt/dppo/'
+        saver = tf.train.Saver()
+        if not os.path.exists(model_path):
+            os.makedirs(model_path)
+        elif len(os.listdir(model_path)) != 0:
+            fs = os.listdir(model_path)
+            for f in fs:
+                os.remove(os.path.join(model_path, f))
 
-    def sigterm_callback(self, signum, frame):
-        """sigterm_callback
-        Callback function
-        Allow user to mannually terminate the process and save the model at any time
-        Use `kill xxxx` instead of `kill -9 xxxx`
-        """
-        print(' [*] System signal {} caught, ready to save...'.format(signum))
-        print(' [*] Frame: ', frame)
-        save(self.sess, './ckpt/dppo/', 'Pendumlum-v0', global_step=GLOBAL_COUNTER)
+        saved_path = saver.save(self.sess, os.path.join(model_path, 'Pendulum-v0'),
+                                global_step=GLOBAL_COUNTER)
+        print(' [*] MODEL SAVED IN: ', saved_path)
+        return saved_path
 
 
 
-class PPOWorker(multiprocessing.Process):
+class PPOMaster(threading.Thread):
+    def __init__(self, model, logdir):
+        super(PPOMaster, self).__init__()
+        self.model = model
+        self.writer = tf.summary.FileWriter(logdir, self.model.sess.graph)
+
+
+    def run(self):
+        global GLOBAL_COUNTER
+        print(' [*] PPO model update process start to run...')
+        while (GLOBAL_COUNTER // MAX_QSIZE) < N_ITER:
+            # Block model update and release rolling event if global queue is empty
+            if GLOBAL_QUEUE.empty():
+                UPDATE_EVENT.clear()
+                ROLLING_EVENT.set()
+            UPDATE_EVENT.wait()
+
+            feed_dict = {}
+            while not GLOBAL_QUEUE.empty():
+                self.model.sess.run(self.model.update_oldpi_op)
+                s, a, r = GLOBAL_QUEUE.get()
+                feed_dict = {self.model.state: s, self.model.action: a, self.model.reward: r}
+                # Update policy using clipping surrogate
+                for _ in range(PI_ITER):
+                    self.model.sess.run(self.model.pitrain_op, feed_dict=feed_dict)
+                # Update value network
+                for _ in range(V_ITER):
+                    self.model.sess.run(self.model.vtrain_op, feed_dict=feed_dict)
+            # Collect summaries
+            sumstr = self.model.sess.run(self.model.sums, feed_dict=feed_dict)
+            self.writer.add_summary(sumstr, global_step=GLOBAL_COUNTER)
+            GLOBAL_COUNTER += 1
+        print(' [*] PPOMaster thread finish and exit')
+        ROLLING_EVENT.set()
+        TERM_EVENT.set()
+
+
+class PPOWorker(threading.Thread):
     def __init__(self, wid, model):
         super(PPOWorker, self).__init__()
         self.wid = wid
@@ -180,6 +189,7 @@ class PPOWorker(multiprocessing.Process):
         self.model = model
 
     def run(self):
+        global GLOBAL_QUEUE
         print(' [*] Worker {} process start to run...'.format(self.wid))
         while not TERM_EVENT.is_set():
             s = self.env.reset()
@@ -198,7 +208,7 @@ class PPOWorker(multiprocessing.Process):
                 if done:
                     break
                 s = s_next
-                if len(buffer_r) % BATCH_SIZE == 0 or it == EP_MAXLEN - 1:
+                if (len(buffer_r) > 0 and len(buffer_r) % BATCH_SIZE == 0) or it == EP_MAXLEN - 1:
                     discounted_r = []
                     last_value = self.model.value_estimate(s_next)
                     for r in buffer_r[::-1]:
@@ -212,10 +222,9 @@ class PPOWorker(multiprocessing.Process):
                     # Block rolling event and release model update if queue size reaches maximum
                     ROLLING_EVENT.wait()
                     GLOBAL_QUEUE.put((batch_s, batch_a, batch_r))
-                    if GLOBAL_QUEUE.qsize() >= MAX_QSIZE:
+                    if GLOBAL_QUEUE.qsize() >= MAX_QSIZE and not TERM_EVENT.is_set():
                         UPDATE_EVENT.set()
                         ROLLING_EVENT.clear()
-                        print(datetime.now(), '--Iteration {} --Global queue filled')
                     # Clear buffer after model update
                     buffer_s.clear()
                     buffer_a.clear()
@@ -224,9 +233,9 @@ class PPOWorker(multiprocessing.Process):
 
 
 
-
 if __name__ == '__main__':
     args = add_arguments()
+    set_global_seed(1)
     if args.method == 'kl_pen':
         METHOD = dict(name='kl_pen', kl_target=0.01, lam=0.5)
     elif args.method == 'clip':
@@ -244,16 +253,19 @@ if __name__ == '__main__':
         for f in files:
             os.remove(f)
 
-    ppo = PPOModel(args.v_lr, args.pi_lr, S_DIM, A_DIM, method=METHOD, logdir=args.logdir)
+    ppo = PPOModel(args.v_lr, args.pi_lr, S_DIM, A_DIM, method=METHOD)
     _, GLOBAL_COUNTER = load(ppo.sess, './ckpt/dppo/')
+    # COORD = tf.train.Coordinator()
 
     processes = []
     for it in range(args.n_workers):
         worker = PPOWorker(it, model=ppo)
         worker.start()
         processes.append(worker)
-    ppo.start()
-    processes.append(ppo)
+    master = PPOMaster(ppo, logdir=args.logdir)
+    master.start()
+    processes.append(master)
+    # COORD.join(processes)
 
     env = gym.make('Pendulum-v0').unwrapped
     while not TERM_EVENT.is_set():
@@ -263,10 +275,17 @@ if __name__ == '__main__':
         for it in range(300):
             env.render()
             s, r, done, info = env.step(ppo.choose_action(s))
+            r = (r + 8.0) / 8.0
+            if np.isnan(r):
+                ROLLING_EVENT.set()
+                UPDATE_EVENT.set()
+                TERM_EVENT.set()
+                raise ValueError('Nan value occurred!')
             if done:
                 break
             discounted_r += running_gamma * r
             running_gamma *= GAMMA
         print(datetime.now(), '--Total discounted reward ', discounted_r)
 
+    ppo.save()
     print('Exit of all processes at ', datetime.now())
