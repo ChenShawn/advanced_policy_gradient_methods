@@ -178,7 +178,7 @@ class DDPGModel(object):
 
 
     def get_value(self, s):
-        return self.sess.run(self.critic.target_q, feed_dict={self.state: s[None, :]})
+        return self.sess.run(self.critic.target_q, feed_dict={self.s_next: s[None, :]})
 
 
 
