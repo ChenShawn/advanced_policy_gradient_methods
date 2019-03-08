@@ -8,7 +8,7 @@ import os
 import random
 import threading
 
-from utils import save, load, set_global_seed
+from utils import save, load, set_global_seed, AgentBase
 from evaluate import AgentEvaluator
 
 """ =============== GLOBAL VARIABLES ================= """
@@ -21,9 +21,9 @@ A_DIM = 1
 S_DIM = 3
 
 BATCH_SIZE = 32
-EPSILON = 0.2
+EPSILON = 0.02
 EP_MAXLEN = 200
-N_ITERS = 300000
+N_ITERS = 30000
 CAPACITY = 10000
 WRITE_LOGS_EVERY = 100
 LOGDIR = './logs/ddpg/'
@@ -128,7 +128,7 @@ class Critic(object):
 
 
 
-class DDPGModel(object):
+class DDPGModel(AgentBase):
     name = 'DDPGModel'
 
     def __init__(self, s_dim, a_dim):
@@ -168,8 +168,8 @@ class DDPGModel(object):
 
 
     def choose_action(self, s):
-        """choose_action
-        Try epsilon-greedy for more exploration
+        """choose_action indicates behavior policy
+        Epsilon-greedy does not work well on continuous control tasks
         """
         if random.uniform(0.0, 1.0) < EPSILON:
             return np.array([random.uniform(0.0, 1.0)], dtype=np.float32)

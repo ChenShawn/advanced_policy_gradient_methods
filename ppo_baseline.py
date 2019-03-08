@@ -4,13 +4,14 @@ import matplotlib.pyplot as plt
 import gym
 import argparse
 import os
+from tqdm import tqdm
 
-from utils import save, load
+from utils import save, load, TrajectoryProcessor
 
 
 def add_arguments():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-i', '--iter', type=int, default=50, help='number of total iteration')
+    parser.add_argument('-i', '--iter', type=int, default=5012, help='number of total iteration')
     parser.add_argument('-b', '--batch_size', type=int, default=32, help='batch size')
     parser.add_argument('--method', type=str, default='clip', help='either kl_pen or clip')
     parser.add_argument('--ep_maxlen', type=int, default=200, help='max length of each episode')
@@ -132,7 +133,7 @@ class PPO(object):
         return np.clip(a, -2.0, 2.0)
 
 
-    def get_v(self, s):
+    def get_value(self, s):
         if s.ndim < 2:
             s = s[np.newaxis, :]
         return self.sess.run(self.v, feed_dict={self.tfs: s})[0, 0]
@@ -157,49 +158,54 @@ if __name__ == '__main__':
     env = gym.make(env_name).unwrapped
     S_DIM = env.observation_space.shape[0]
     A_DIM = env.action_space.shape[0]
-
     ppo = PPO(args.v_lr, args.pi_lr, S_DIM, A_DIM, method=METHOD, model_dir=args.model_dir)
-    all_ep_r = []
-    writer = tf.summary.FileWriter(args.logdir, ppo.sess.graph)
 
-    for ep in range(args.iter):
-        s = env.reset()
-        buffer_s, buffer_a, buffer_r = [], [], []
-        ep_r = 0
-        for t in range(args.ep_maxlen):
-            env.render()
-            a = ppo.choose_action(s)
-            s_, r, done, _ = env.step(a)
-            buffer_s.append(s)
-            buffer_a.append(a)
-            buffer_r.append((r + 8.0) / 8.0)
-            s = s_
-            ep_r += r
+    processor = TrajectoryProcessor()
+    for it in tqdm(range(args.iter)):
+        processor.add_trajectory(env, ppo)
+    processor.save('./logs/records/Pendulum-v0/expert.hdf5')
 
-            # update ppo
-            if (t + 1) % args.batch_size == 0 or t == args.ep_maxlen - 1:
-                v_s_ = ppo.get_v(s_)
-                discounted_r = []
-                for r in buffer_r[::-1]:
-                    v_s_ = r + args.gamma * v_s_
-                    discounted_r.append(v_s_)
-                discounted_r.reverse()
-
-                bs, ba, br = np.vstack(buffer_s), np.vstack(buffer_a), np.array(discounted_r)[:, np.newaxis]
-                buffer_s, buffer_a, buffer_r = [], [], []
-                ppo.update(bs, ba, br, v_iter=args.v_iter, pi_iter=args.pi_iter, writer=writer)
-        if ep == 0:
-            all_ep_r.append(ep_r)
-        else:
-            all_ep_r.append(all_ep_r[-1] * 0.9 + ep_r * 0.1)
-        print(
-            'Ep: %i' % ep,
-            "| Ep_r: %i" % ep_r,
-            ("| Lam: %.4f" % ppo.method['lam']) if ppo.method['name'] == 'kl_pen' else '',
-        )
-    save(ppo.sess, './ckpt/ppo/', env_name, ppo.counter)
-
-    plt.plot(np.arange(len(all_ep_r)), all_ep_r)
-    plt.xlabel('Episode')
-    plt.ylabel('Moving averaged episode reward')
-    plt.show()
+    # all_ep_r = []
+    # writer = tf.summary.FileWriter(args.logdir, ppo.sess.graph)
+    #
+    # for ep in range(args.iter):
+    #     s = env.reset()
+    #     buffer_s, buffer_a, buffer_r = [], [], []
+    #     ep_r = 0
+    #     for t in range(args.ep_maxlen):
+    #         env.render()
+    #         a = ppo.choose_action(s)
+    #         s_, r, done, _ = env.step(a)
+    #         buffer_s.append(s)
+    #         buffer_a.append(a)
+    #         buffer_r.append((r + 8.0) / 8.0)
+    #         s = s_
+    #         ep_r += r
+    #
+    #         # update ppo
+    #         if (t + 1) % args.batch_size == 0 or t == args.ep_maxlen - 1:
+    #             v_s_ = ppo.get_value(s_)
+    #             discounted_r = []
+    #             for r in buffer_r[::-1]:
+    #                 v_s_ = r + args.gamma * v_s_
+    #                 discounted_r.append(v_s_)
+    #             discounted_r.reverse()
+    #
+    #             bs, ba, br = np.vstack(buffer_s), np.vstack(buffer_a), np.array(discounted_r)[:, np.newaxis]
+    #             buffer_s, buffer_a, buffer_r = [], [], []
+    #             ppo.update(bs, ba, br, v_iter=args.v_iter, pi_iter=args.pi_iter, writer=writer)
+    #     if ep == 0:
+    #         all_ep_r.append(ep_r)
+    #     else:
+    #         all_ep_r.append(all_ep_r[-1] * 0.9 + ep_r * 0.1)
+    #     print(
+    #         'Ep: %i' % ep,
+    #         "| Ep_r: %i" % ep_r,
+    #         ("| Lam: %.4f" % ppo.method['lam']) if ppo.method['name'] == 'kl_pen' else '',
+    #     )
+    # save(ppo.sess, './ckpt/ppo/', env_name, ppo.counter)
+    #
+    # plt.plot(np.arange(len(all_ep_r)), all_ep_r)
+    # plt.xlabel('Episode')
+    # plt.ylabel('Moving averaged episode reward')
+    # plt.show()

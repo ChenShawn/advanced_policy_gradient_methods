@@ -6,7 +6,7 @@ import numpy as np
 import os
 from datetime import datetime
 
-from utils import save, load, build_conjugate_gradient
+from utils import save, load, build_conjugate_gradient, AgentBase
 from evaluate import AgentEvaluator
 
 
@@ -76,7 +76,7 @@ def collect_multi_batch(env, agent, maxlen, batch_size=64, qsize=2, gamma=0.9):
             break
     # Accumulate rewards
     discounted_r = []
-    last_value = agent.value_estimate(np.concatenate(que, axis=-1))
+    last_value = agent.get_value(np.concatenate(que, axis=-1))
     for r in buffer_r[::-1]:
         last_value = r + gamma * last_value
         discounted_r.append(last_value)
@@ -96,7 +96,7 @@ def collect_multi_batch(env, agent, maxlen, batch_size=64, qsize=2, gamma=0.9):
 
 
 
-class TRPOModel(object):
+class TRPOModel(AgentBase):
     def __init__(self, v_lr, model_dir, delta=1e-3):
         self.state = tf.placeholder(tf.float32, [None, 6], name='state')
         self.action = tf.placeholder(tf.float32, [None, 1], name='action')
@@ -207,7 +207,7 @@ class TRPOModel(object):
             writer.add_summary(sumstr, counter)
 
 
-    def value_estimate(self, s):
+    def get_value(self, s):
         return self.sess.run(self.value, feed_dict={self.state: s})[0, 0]
 
 
