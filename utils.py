@@ -74,6 +74,11 @@ def set_global_seed(seed):
     random.seed(seed)
 
 
+def exponential_moving_average(theta, tau=0.001):
+    ema = tf.train.ExponentialMovingAverage(decay=1 - tau)
+    update = ema.apply(theta)
+
+
 class AgentBase(object):
     def get_value(self, *args, **kwargs):
         raise NotImplementedError
