@@ -111,7 +111,8 @@ class AgentEvaluator(object):
         df['step'] = np.arange(len(self.records), dtype=np.int32)
         df['reward_mean'] = array.mean(axis=-1)
         df['reward_std'] = array.std(axis=-1)
-        df['reward_smooth'] = df['reward_mean'].ewm(span=20).mean()
+        df['reward_smooth'] = df['' \
+                                 ''].ewm(span=20).mean()
         df['upper_bound'] = df['reward_mean'] + df['reward_std']
         df['lower_bound'] = df['reward_mean'] - df['reward_std']
         print(' [*] csv file successfully saved in ' + csv_dir)

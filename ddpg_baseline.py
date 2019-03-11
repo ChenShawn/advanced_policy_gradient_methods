@@ -2,11 +2,11 @@ import tensorflow as tf
 import numpy as np
 import gym
 import time
+from tqdm import tqdm
 
 
-#####################  hyper parameters  ####################
-
-MAX_EPISODES = 1000
+##########################  hyper parameters  ###########################
+MAX_EPISODES = 500
 MAX_EP_STEPS = 200
 LR_A = 0.001
 LR_C = 0.002
@@ -17,7 +17,7 @@ BATCH_SIZE = 32
 WRITE_LOGS_EVERY = 100
 
 RENDER = True
-ENV_NAME = 'Pendulum-v0'
+ENV_NAME = 'MountainCarContinuous-v0'
 LOGDIR = './logs/ddpg/'
 
 
@@ -126,14 +126,14 @@ a_bound = env.action_space.high
 
 ddpg = DDPGModel(a_dim, s_dim, a_bound)
 
-var = 3  # control exploration
+var = 3
 t1 = time.time()
 functor = CallbackFunctor(LOGDIR, ddpg)
-for i in range(MAX_EPISODES):
+for i in tqdm(range(MAX_EPISODES)):
     s = env.reset()
     ep_reward = 0
     for j in range(MAX_EP_STEPS):
-        if RENDER:
+        if RENDER and i > int(MAX_EPISODES * 0.75):
             env.render()
 
         # Add exploration noise
@@ -141,7 +141,7 @@ for i in range(MAX_EPISODES):
         a = np.clip(np.random.normal(a, var), -2, 2)    # add randomness to action selection for exploration
         s_, r, done, info = env.step(a)
 
-        ddpg.store_transition(s, a, r / 10, s_)
+        ddpg.store_transition(s, a, r / 10.0, s_)
 
         if ddpg.pointer > MEMORY_CAPACITY:
             var *= .9995
@@ -149,8 +149,8 @@ for i in range(MAX_EPISODES):
 
         s = s_
         ep_reward += r
-        if j == MAX_EP_STEPS-1:
-            print('Episode:', i, ' Reward: %i' % int(ep_reward), 'Explore: %.2f' % var, )
+        if j == MAX_EP_STEPS - 1:
+            # print('Episode:', i, ' Reward: %i' % int(ep_reward), 'Explore: %.2f' % var, )
             # if ep_reward > -300:RENDER = True
             break
 
