@@ -33,13 +33,14 @@ S_DIM = 3
 
 BATCH_SIZE = 128
 EP_MAXLEN = 200
-N_ITERS = 150000
+N_ITERS = 9000
 CAPACITY = 10000
 WRITE_LOGS_EVERY = 200
 LOGDIR = './logs/ddpg/'
 MODEL_DIR = './ckpt/ddpg/'
 
-RENDER = False
+RENDER = True
+TEST = True
 LOCK = threading.Lock()
 
 """ ========================================================================= """
@@ -248,8 +249,14 @@ if __name__ == '__main__':
     buffer_thread = BufferThread(render=RENDER)
     buffer.init_buffer(buffer_thread.env, model)
 
-    model_thread.start()
+    if not TEST:
+        model_thread.start()
+    #else:
+    model.variance = 0.0
     buffer_thread.start()
-    coord.join([model_thread, buffer_thread])
-    save(model.sess, MODEL_DIR, model.name, global_step=model.counter)
+    if not TEST:
+        coord.join([model_thread, buffer_thread])
+        save(model.sess, MODEL_DIR, model.name, global_step=model.counter)
+    else:
+        coord.join([buffer_thread])
     print(' [*] The main process reaches the exit!!')
