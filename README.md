@@ -11,16 +11,16 @@
 ## Some of the results
 
 <figure>
-    <img src="./results/ddpg_q_distribution.png" width="90%">
+    <img src="./results/ddpg_q_distribution.png" width="30%">
     <figcaption align="center">Q-function distribution</figcaption>
 </figure>
 
 <figure>
-    <img src="./results/avg_rewards.png" width="90%">
+    <img src="./results/avg_rewards.png" width="30%">
     <figcaption align="center">Average rewards</figcaption>
 </figure>
 
 <figure>
-    <img src="./results/critic_loss.png" width="90%">
+    <img src="./results/critic_loss.png" width="30%">
     <figcaption align="center">Critic loss</figcaption>
 </figure>
