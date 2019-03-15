@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 ##########################  hyper parameters  ###########################
 MAX_EPISODES = 500
-MAX_EP_STEPS = 200
+MAX_EP_STEPS = 500
 LR_A = 0.001
 LR_C = 0.002
 GAMMA = 0.9
@@ -17,7 +17,7 @@ BATCH_SIZE = 32
 WRITE_LOGS_EVERY = 100
 
 RENDER = True
-ENV_NAME = 'MountainCarContinuous-v0'
+ENV_NAME = 'Pendulum-v0'
 LOGDIR = './logs/ddpg/'
 
 
@@ -121,7 +121,8 @@ env = env.unwrapped
 env.seed(1)
 
 s_dim = env.observation_space.shape[0]
-a_dim = env.action_space.shape[0]
+# a_dim = env.action_space.shape[0]
+a_dim = 1  # Only for Acrobot-v2
 a_bound = env.action_space.high
 
 ddpg = DDPGModel(a_dim, s_dim, a_bound)
@@ -133,7 +134,7 @@ for i in tqdm(range(MAX_EPISODES)):
     s = env.reset()
     ep_reward = 0
     for j in range(MAX_EP_STEPS):
-        if RENDER and i > int(MAX_EPISODES * 0.75):
+        if RENDER:
             env.render()
 
         # Add exploration noise
@@ -144,7 +145,7 @@ for i in tqdm(range(MAX_EPISODES)):
         ddpg.store_transition(s, a, r / 10.0, s_)
 
         if ddpg.pointer > MEMORY_CAPACITY:
-            var *= .9995
+            var *= .9999
             ddpg.learn(callback=functor)
 
         s = s_
