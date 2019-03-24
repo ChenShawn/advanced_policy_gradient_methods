@@ -24,3 +24,10 @@
     <img src="./results/critic_loss.png" width="30%">
     <figcaption align="center">Critic loss</figcaption>
 </figure>
+
+**Updated in March 24th, 2019:**  Re-implement asynchronous version of MADDPG using the [OpenAI multi-agent particle environments](https://github.com/openai/multiagent-particle-envs)
+
+<figure>
+    <img src="./results/maddpg_rewards.png" width="30%">
+    <figcaption align="center">Exponential Moving Average Rewards</figcaption>
+</figure>

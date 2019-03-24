@@ -15,16 +15,17 @@ N_AGENTS = 3
 GAMMA = 0.9
 TAU = 0.01
 VAR_DECAY = 0.995
-A_LR = 1e-3
-C_LR = 2e-3
-A_ITER = 3
-C_ITER = 1
+VAR_INIT = 1.0
+A_LR = 1e-4
+C_LR = 2e-4
+A_ITER = 1
+C_ITER = 5
 A_DIM = 5
 S_DIM = 16
 
 BATCH_SIZE = 128
 EP_MAXLEN = 300
-N_ITERS = 500000
+N_ITERS = 200000
 CAPACITY = 50000
 WRITE_LOGS_EVERY = 200
 LOGDIR = './logs/maddpg/'
@@ -121,8 +122,8 @@ class Agent(AgentBase):
 
         a_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope= self.name + '/Actor')
         c_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=self.name + '/Critic')
-        a_loss = -tf.reduce_mean(self.target_q)
-        self.a_optim = tf.train.AdamOptimizer(A_LR).minimize(a_loss, var_list=a_vars)
+        self.a_loss = -tf.reduce_mean(self.target_q)
+        self.a_optim = tf.train.AdamOptimizer(A_LR).minimize(self.a_loss, var_list=a_vars)
 
         with tf.control_dependencies(self.target_update):
             self.td_error = tf.losses.mean_squared_error(labels=self.reward + GAMMA * self.eval_q,
@@ -165,12 +166,13 @@ class MADDPGModel(AgentBase):
         self.a_optim = [agent.a_optim for agent in self.agents]
         self.c_optim = [agent.c_optim for agent in self.agents]
         self.counter = 0
-        self.variance = 1.0
+        self.variance = VAR_INIT
 
         mean_rewards = [tf.reduce_mean(agent.reward) for agent in self.agents]
         r_sums = [tf.summary.scalar('reward_%d' % i, r) for i, r in enumerate(mean_rewards)]
         q_sums = [tf.summary.scalar('critic_loss_%d' % i, agent.td_error) for i, agent in enumerate(self.agents)]
-        self.sums = tf.summary.merge(r_sums + q_sums, name='summaries')
+        a_sums = [tf.summary.scalar('actor_loss_%d' % i, agent.a_loss) for i, agent in enumerate(self.agents)]
+        self.sums = tf.summary.merge(r_sums + q_sums + a_sums, name='summaries')
 
         self.sess = tf.Session()
         self.sess.run(tf.global_variables_initializer())
@@ -183,9 +185,11 @@ class MADDPGModel(AgentBase):
             feed_dict[agent.state] = s
             feed_dict[agent.reward] = r
             feed_dict[agent.s_next] = s_next
-        self.sess.run(self.a_optim, feed_dict=feed_dict)
+        for _ in range(A_ITER):
+            self.sess.run(self.a_optim, feed_dict=feed_dict)
         feed_dict[self.actors] = aa
-        self.sess.run(self.c_optim, feed_dict=feed_dict)
+        for _ in range(C_ITER):
+            self.sess.run(self.c_optim, feed_dict=feed_dict)
         self.counter += 1
         if writer is not None and self.counter % WRITE_LOGS_EVERY == (WRITE_LOGS_EVERY - 1):
             self.variance *= VAR_DECAY
