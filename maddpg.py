@@ -24,9 +24,9 @@ A_DIM = 5
 S_DIM = 16
 
 BATCH_SIZE = 128
-EP_MAXLEN = 300
+EP_MAXLEN = 20
 N_ITERS = 200000
-CAPACITY = 50000
+CAPACITY = 20000
 WRITE_LOGS_EVERY = 200
 LOGDIR = './logs/maddpg/'
 MODEL_DIR = './ckpt/maddpg/'
@@ -272,11 +272,9 @@ if __name__ == '__main__':
     save(model.sess, MODEL_DIR, model.name, global_step=model.counter)
 
     while True:
-        # Need to interrupt mannually
+        # Need to interrupt manually
         s = env.reset()
         for it in range(EP_MAXLEN):
             env.render()
             s, r, info, done = env.step(model.choose_action(s))
             sleep(0.2)
-            if any(done):
-                break

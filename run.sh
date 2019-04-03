@@ -1,9 +1,9 @@
 
 if [ $1 == "-f" ]; then
-    rm ./logs/ddpg/*
-    rm ./ckpt/ddpg/*
+    rm ./logs/maddpg/*
+    rm ./ckpt/maddpg/*
 else
-    python ddpg.py
+    python maddpg.py
 fi
 
 # rm ./logs/ddpg/*

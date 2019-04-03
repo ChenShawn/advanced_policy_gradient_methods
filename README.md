@@ -10,6 +10,8 @@
 
 ## Some of the results
 
+### DDPG
+
 <figure>
     <img src="./results/ddpg_q_distribution.png" width="30%">
     <figcaption align="center">Q-function distribution</figcaption>
@@ -24,6 +26,8 @@
     <img src="./results/critic_loss.png" width="30%">
     <figcaption align="center">Critic loss</figcaption>
 </figure>
+
+### MADDPG
 
 **Updated in March 24th, 2019:**  Re-implement asynchronous version of MADDPG using the [OpenAI multi-agent particle environments](https://github.com/openai/multiagent-particle-envs)
 
